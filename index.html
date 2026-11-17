@@ -47,6 +47,8 @@ footer{background:var(--sf);border-top:1px solid var(--ln);padding:10px 14px cal
 <main>
 <section id="files" class="on">
 <div class="bar"><input type="text" id="q" placeholder="ファイル名で検索"><button class="b p" id="go">検索</button></div>
+<div class="bar"><button class="b" id="up" style="display:none">← 戻る</button><button class="b" id="pa" style="display:none">▶ このフォルダを再生</button></div>
+<div class="hint" id="bc"></div>
 <div id="fl"><p class="hint">「設定」でクライアントIDを入れてログインすると、Googleドライブの音楽が表示されます。</p></div>
 <button class="b" id="more" style="display:none;width:100%;margin-top:10px">さらに読み込む</button>
 </section>
@@ -111,31 +113,48 @@ $('#login').onclick=async()=>{clientId=$('#cid').value.trim();SV('cid',clientId)
  if(await ensureToken()){document.querySelector('[data-t=files]').click();loadFiles()}};
 $('#logout').onclick=()=>{if(tok.t&&window.google)google.accounts.oauth2.revoke(tok.t);tok={t:null,e:0};SV('tok',tok);toast('ログアウトしました')};
 
-// ---------- drive list ----------
-let files=[],nextTok=null;
+// ---------- drive browse ----------
+const FOLDER='application/vnd.google-apps.folder';
+let files=[],nextTok=null,path=[{id:'root',name:'マイドライブ'}],searching=false;
 async function loadFiles(more){
  try{
-  let q="mimeType contains 'audio/' and trashed=false";
   const s=$('#q').value.trim().replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-  if(s)q+=` and name contains '${s}'`;
-  const p=new URLSearchParams({q,pageSize:100,orderBy:'name',fields:'nextPageToken,files(id,name)'});
+  searching=!!s;
+  const q=s?`mimeType contains 'audio/' and trashed=false and name contains '${s}'`
+   :`'${path[path.length-1].id}' in parents and trashed=false and (mimeType='${FOLDER}' or mimeType contains 'audio/')`;
+  const p=new URLSearchParams({q,pageSize:100,orderBy:'folder,name',fields:'nextPageToken,files(id,name,mimeType)'});
   if(more&&nextTok)p.set('pageToken',nextTok);
   toast('読み込み中…');
   const d=await(await api('https://www.googleapis.com/drive/v3/files?'+p)).json();
   files=more?files.concat(d.files):d.files;nextTok=d.nextPageToken||null;
-  renderFiles();toast(files.length+'件')
+  renderFiles();toast('')
  }catch(e){toast('読み込みエラー: '+e.message)}}
 function renderFiles(){
  const box=$('#fl');box.textContent='';
- if(!files.length){box.innerHTML='<p class="hint">音楽ファイルが見つかりませんでした。</p>'}
- files.forEach((f,i)=>{
+ $('#bc').textContent=searching?'検索結果（全フォルダから）':path.map(x=>x.name).join(' / ');
+ $('#up').style.display=(searching||path.length>1)?'':'none';
+ const songs=files.filter(f=>f.mimeType!==FOLDER);
+ $('#pa').style.display=songs.length?'':'none';
+ $('#pa').onclick=()=>{queue=songs.slice();saveQ();renderQ();playAt(0)};
+ if(!files.length)box.innerHTML='<p class="hint">このフォルダに音楽ファイルやフォルダはありません。</p>';
+ files.forEach(f=>{
   const r=document.createElement('div');r.className='row';
-  const n=document.createElement('span');n.className='n';n.textContent=f.name;n.onclick=()=>{queue=files.slice();playAt(i)};
-  const a=document.createElement('button');a.className='b';a.textContent='＋';a.onclick=()=>{queue.push(f);saveQ();renderQ();toast('キューに追加しました')};
-  r.append(n,a);box.append(r)});
+  const n=document.createElement('span');n.className='n';
+  if(f.mimeType===FOLDER){
+   n.textContent='📁 '+f.name;
+   n.onclick=()=>{path.push({id:f.id,name:f.name});$('#q').value='';nextTok=null;loadFiles()};
+   r.append(n)
+  }else{
+   n.textContent=f.name;
+   n.onclick=()=>{queue=songs.slice();saveQ();renderQ();playAt(songs.indexOf(f))};
+   const a=document.createElement('button');a.className='b';a.textContent='＋';
+   a.onclick=()=>{queue.push(f);saveQ();renderQ();toast('キューに追加しました')};
+   r.append(n,a)}
+  box.append(r)});
  $('#more').style.display=nextTok?'block':'none'}
-$('#go').onclick=()=>loadFiles();
-$('#q').onkeydown=e=>{if(e.key==='Enter')loadFiles()};
+$('#go').onclick=()=>{nextTok=null;loadFiles()};
+$('#q').onkeydown=e=>{if(e.key==='Enter'){nextTok=null;loadFiles()}};
+$('#up').onclick=()=>{if(searching)$('#q').value='';else path.pop();nextTok=null;loadFiles()};
 $('#more').onclick=()=>loadFiles(true);
 
 // ---------- audio engine ----------
