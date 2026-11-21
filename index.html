@@ -37,6 +37,14 @@ footer{background:var(--sf);border-top:1px solid var(--ln);padding:10px 14px cal
 .ctl{display:flex;justify-content:center;gap:22px;margin-top:4px}
 .ctl button{background:none;border:0;color:var(--tx);font-size:28px;padding:4px 10px}
 .ctl #pp{color:var(--ac);font-size:34px}
+#vd{display:none;width:100%;max-height:32vh;background:#000;border-radius:8px;margin-bottom:8px}
+#iv{display:none;position:fixed;inset:0;background:#000;z-index:10;color:#fff}
+#ivb{position:absolute;inset:0;overflow:auto;display:flex}
+#im{max-width:100%;max-height:100%;object-fit:contain;margin:auto}
+#im.z{max-width:none;max-height:none;width:200%}
+#iv button{position:absolute;background:rgba(0,0,0,.55);color:#fff;border:0;border-radius:22px;font-size:26px;width:44px;height:44px}
+#ix{top:calc(10px + env(safe-area-inset-top));right:12px}#ip{left:10px;top:50%}#in{right:10px;top:50%}
+#ic{position:absolute;left:0;right:0;bottom:calc(10px + env(safe-area-inset-bottom));text-align:center;font-size:13px;padding:0 60px;text-shadow:0 0 4px #000}
 .seek{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mu)}
 </style>
 </head>
@@ -76,6 +84,7 @@ footer{background:var(--sf);border-top:1px solid var(--ln);padding:10px 14px cal
 <div class="seek"><span id="cu">0:00</span><input type="range" id="sk" min="0" max="1000" value="0"><span id="du">0:00</span></div>
 <div class="ctl"><button id="pv">⏮</button><button id="pp">▶</button><button id="nx">⏭</button></div>
 </footer>
+<div id="iv"><div id="ivb"><img id="im" alt=""></div><div id="ic"></div><button id="ix">✕</button><button id="ip">‹</button><button id="in">›</button></div>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script>
 const $=s=>document.querySelector(s);
@@ -115,13 +124,15 @@ $('#logout').onclick=()=>{if(tok.t&&window.google)google.accounts.oauth2.revoke(
 
 // ---------- drive browse ----------
 const FOLDER='application/vnd.google-apps.folder';
+const isImg=f=>(f.mimeType||'').startsWith('image/');
+let imgs=[],ii=0,imSeq=0,imUrl=null;
 let files=[],nextTok=null,path=[{id:'root',name:'マイドライブ'}],searching=false;
 async function loadFiles(more){
  try{
   const s=$('#q').value.trim().replace(/\\/g,'\\\\').replace(/'/g,"\\'");
   searching=!!s;
-  const q=s?`mimeType contains 'audio/' and trashed=false and name contains '${s}'`
-   :`'${path[path.length-1].id}' in parents and trashed=false and (mimeType='${FOLDER}' or mimeType contains 'audio/')`;
+  const q=s?`(mimeType contains 'audio/' or mimeType contains 'video/' or mimeType contains 'image/') and trashed=false and name contains '${s}'`
+   :`'${path[path.length-1].id}' in parents and trashed=false and (mimeType='${FOLDER}' or mimeType contains 'audio/' or mimeType contains 'video/' or mimeType contains 'image/')`;
   const p=new URLSearchParams({q,pageSize:100,orderBy:'folder,name',fields:'nextPageToken,files(id,name,mimeType)'});
   if(more&&nextTok)p.set('pageToken',nextTok);
   toast('読み込み中…');
@@ -133,10 +144,10 @@ function renderFiles(){
  const box=$('#fl');box.textContent='';
  $('#bc').textContent=searching?'検索結果（全フォルダから）':path.map(x=>x.name).join(' / ');
  $('#up').style.display=(searching||path.length>1)?'':'none';
- const songs=files.filter(f=>f.mimeType!==FOLDER);
+ imgs=files.filter(isImg);const songs=files.filter(f=>f.mimeType!==FOLDER&&!isImg(f));
  $('#pa').style.display=songs.length?'':'none';
  $('#pa').onclick=()=>{queue=songs.slice();saveQ();renderQ();playAt(0)};
- if(!files.length)box.innerHTML='<p class="hint">このフォルダに音楽ファイルやフォルダはありません。</p>';
+ if(!files.length)box.innerHTML='<p class="hint">このフォルダに音楽・動画・画像やフォルダはありません。</p>';
  files.forEach(f=>{
   const r=document.createElement('div');r.className='row';
   const n=document.createElement('span');n.className='n';
@@ -144,6 +155,8 @@ function renderFiles(){
    n.textContent='📁 '+f.name;
    n.onclick=()=>{path.push({id:f.id,name:f.name});$('#q').value='';nextTok=null;loadFiles()};
    r.append(n)
+  }else if(isImg(f)){
+   n.textContent='🖼 '+f.name;n.onclick=()=>openImg(imgs.indexOf(f));r.append(n)
   }else{
    n.textContent=f.name;
    n.onclick=()=>{queue=songs.slice();saveQ();renderQ();playAt(songs.indexOf(f))};
@@ -157,8 +170,29 @@ $('#q').onkeydown=e=>{if(e.key==='Enter'){nextTok=null;loadFiles()}};
 $('#up').onclick=()=>{if(searching)$('#q').value='';else path.pop();nextTok=null;loadFiles()};
 $('#more').onclick=()=>loadFiles(true);
 
+// ---------- image viewer ----------
+async function openImg(i){
+ if(i<0||i>=imgs.length)return;
+ ii=i;const f=imgs[i],my=++imSeq,im=$('#im');
+ $('#iv').style.display='block';im.classList.remove('z');im.removeAttribute('src');
+ $('#ic').textContent=`読み込み中… ${i+1}/${imgs.length}`;
+ try{
+  const b=await(await api(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media`)).blob();
+  if(my!==imSeq)return;
+  if(imUrl)URL.revokeObjectURL(imUrl);
+  imUrl=URL.createObjectURL(b);im.src=imUrl;
+  $('#ic').textContent=`${i+1}/${imgs.length}　${f.name}`
+ }catch(e){if(my===imSeq)$('#ic').textContent='読み込みエラー: '+e.message}}
+$('#ix').onclick=()=>{imSeq++;$('#iv').style.display='none'};
+$('#ip').onclick=()=>openImg(ii-1);$('#in').onclick=()=>openImg(ii+1);
+$('#im').onclick=e=>e.target.classList.toggle('z');
+let tx=null;
+$('#iv').ontouchstart=e=>{tx=e.touches.length===1?e.touches[0].clientX:null};
+$('#iv').ontouchend=e=>{if(tx===null||$('#im').classList.contains('z'))return;
+ const d=e.changedTouches[0].clientX-tx;if(Math.abs(d)>70)openImg(ii+(d<0?1:-1));tx=null};
+
 // ---------- audio engine ----------
-const au=new Audio();au.preload='auto';au.setAttribute('playsinline','');
+const au=document.createElement('video');au.id='vd';au.preload='auto';au.setAttribute('playsinline','');$('footer').insertBefore(au,$('#ti'));
 const BANDS=[[60,'lowshelf','60Hz'],[230,'peaking','230Hz'],[910,'peaking','910Hz'],[3600,'peaking','3.6kHz'],[14000,'highshelf','14kHz']];
 const PRESETS={'フラット':[0,0,0,0,0],'低音強め':[7,4,0,-1,0],'ボーカル':[-2,0,3,4,1],'高音強め':[-1,0,0,4,7],'ラウド':[5,2,-1,3,5]};
 let eqs=LS('eq',{g:[0,0,0,0,0],pre:100,lim:true});
@@ -208,7 +242,7 @@ function renderQ(){
   r.append(n,x);box.append(r)})}
 async function playAt(i){
  if(i<0||i>=queue.length)return;
- cur=i;const f=queue[i],my=++seq;
+ cur=i;const f=queue[i],my=++seq;au.style.display=(f.mimeType||'').startsWith('video/')?'block':'none';
  renderQ();$('#ti').textContent=f.name;saveQ();
  setupAudio();ctx.resume();
  try{
